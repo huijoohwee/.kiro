@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "name": "Runnable Demo Compliance Check",
+  "description": "Runs doc:sanity after any *-demo.md file is saved in huijoohwee/docs to catch missing runnable template keys and panel routing violations immediately.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "huijoohwee/docs/*-demo.md"
+    ]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "npm run doc:sanity",
+    "timeout": 30
+  },
+  "workspaceFolderName": "GitHub",
+  "shortName": "runnable-demo-compliance-check"
+}
