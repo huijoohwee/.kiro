@@ -2,8 +2,8 @@
 title: "Knowgrph Agentic Travel Commerce Platform — Design"
 doc_type: "Spec Design"
 schema: "kiro-spec-design/v1"
-version: "1.0.0"
-date: "2026-08-19"
+version: "1.4.0"
+date: "2026-08-20"
 lang: "en-US"
 frontmatter_contract: "required"
 spec_type: "feature"
@@ -11,11 +11,12 @@ workflow_type: "requirements-first"
 feature_name: "knowgrph-agentic-travel-commerce-platform"
 owner: "Solo Founder / AI Orchestrator"
 lane: "authoring"
-local_rung: "spec-complete"
+universal_scope: false
+local_rung: "dev-proven"
 delivered_rung: "undocumented"
 deploy_boundary: "dev-only"
-source_specification: "joohwee/prd-tad-ard/knowgrph-agentic-travel-commerce-platform-prd-tad-adr.md v1.0.0"
-requirements_baseline: ".kiro/specs/knowgrph-agentic-travel-commerce-platform/requirements.md v1.0.0"
+source_specification: "joohwee/prd-tad-ard/knowgrph-agentic-travel-commerce-platform-prd-tad-adr.md v1.4.0"
+requirements_baseline: ".kiro/specs/knowgrph-agentic-travel-commerce-platform/requirements.md v1.4.0"
 governing_contracts:
   - "huijoohwee.github.io/guidelines/agentic-sdlc-guidelines.md"
   - "agentic-canvas-os/docs/START-WORKFLOW.md"
@@ -26,40 +27,70 @@ governing_contracts:
 
 ## Overview
 
-This design realizes the consolidation increment: make a trip's leg-dependency structure a first-class object the platform reasons over, make the principal's spend guardrail a real concurrent ledger rather than a single number checked once, and layer three purpose-fit caches around both. Everything else — Shared Canvas Node Store, Agent Registry/Router, Discovery Harnesses, Issuance Service, Settlement Verifier, Notification Dispatcher, Marketplace Registry Canvas — is consumed at its existing interface and not modified. Guardrail Gate gains one data dependency and no interface change.
+This design realizes the consolidation increment: make a trip's leg-dependency structure a first-class object the platform reasons over, make the principal's spend guardrail a real concurrent ledger rather than a single number checked once, and layer three purpose-fit caches around both. The inherited public contracts remain stable, but their owning Workers are extended internally where production-safe wiring requires it: Shared Canvas adds an atomic travel outbox and cold seed, Agent Registry/Router adds cached travel routing, payment adds an isolated provider-effect journal boundary, and service-only provider adapters implement live Discovery and settlement effects. Guardrail Gate gains one data dependency and no interface change.
+
+**Implementation status (2026-08-20):** `dev-proven` in the authoring lane. Protected travel integration PR #814 is merged; clean-install demo, deadline hardening, and nested-lock supply-chain closure are review-ready in PR #818. The local matrices exercise the Durable Object runtime, Shared Canvas atomic trigger/cold initialization, strict Search→Verify identity, provider-backed settlement, reconciliation custody, bounded readiness chains, executable browser/presenter demo, storage authorization, bounded keyset paging/streaming, signed media ownership, publication ACLs, both committed dependency graphs, and Worker packaging. The source is not yet a verified deployment: protected provider configuration, bootstrap receipt v2, provider UAT, deployed-state, live effect/latency/capacity telemetry, and rollback receipts remain absent; `delivered_rung` remains `undocumented`.
 
 Three new components, exactly as the PRD Topology names them, plus the three cache layers and the inference consolidation:
 
 | Unit | Responsibility (single) | Runtime | Authored-line ceiling |
 |---|---|---|---|
-| `bundle-graph-store.ts` | Persist `legs`/`edges` for one `bundle_id`; expose downstream BFS, atomic commit, rollback | Durable Object + SQLite | ≤ 600 |
+| `bundle-graph-store.ts` | Coordinate one bundle DO; expose mutation planning, staged commit/finalization, rollback, alarms, and hibernatable WebSockets | Durable Object + SQLite | ≤ 600 |
 | `envelope-ledger.ts` | Persist `envelope`/`holds` for one `principal_id`; expose atomic check-and-reserve | Durable Object + SQLite | ≤ 600 |
-| `reopt-worker.ts` | Orchestrate one Cascade: BFS → fan-out → gate → commit → one settlement → archive | Worker | ≤ 600 |
+| `reopt-worker.ts` | Orchestrate one Cascade: plan → fan-out → reserve → prepare → recover/finalize | Worker | ≤ 600 |
 
 Supporting units, separated so no unit carries two responsibilities and no unit approaches the ceiling:
 
 | Unit | Responsibility (single) |
 |---|---|
-| `bundle-types.ts` | Type declarations only, zero runtime value |
-| `topo-order.ts` | Incremental topological order maintenance and cycle rejection |
+| `bundle-types.ts` | Type-only closed contracts and branded identities; runtime constants/decoders live in `bundle-runtime.ts` |
+| `bundle-graph-schema.ts` | Bundle DO SQLite schema and bounded migration helpers |
+| `bundle-graph-records.ts` | SQLite row types and immutable domain-record mapping |
+| `bundle-graph-storage.ts` | Bundle/cascade/topology persistence operations and alarm scheduling |
+| `bundle-graph-validation.ts` | Seed, leg, scale, and committed-position validation |
+| `bundle-graph-observability.ts` | Session/cost log persistence and hibernatable WebSocket broadcast |
+| `topo-order.ts` | Deterministic topological ordering, cycle rejection, and downstream affected-set calculation |
 | `reopt-dispatch.ts` | Concurrent Re_Quote fan-out / fan-in against Agent Registry/Router |
+| `cascade-recovery.ts` | Idempotent settlement, finalize, rollback, archive-deferred retry, and recovery disposition |
+| `bundle-reconciliation.ts`, `reconciliation-operator.ts` | Durable operator decision audit and graph/ledger convergence after ambiguous settlement |
+| `reconciliation-custody.ts` | Non-expiring quarantined Holds and idempotent commit/release custody transitions |
+| `envelope-ledger-schema.ts` | Envelope DO SQLite schema, indexes, and bounded additive migrations |
+| `envelope-ledger-records.ts` | Ledger row mapping, money validation, and shared deterministic reservation helpers |
+| `envelope-ledger-state.ts`, `envelope-ledger-alarms.ts` | O(1) authoritative active-total/revision reads plus repairable expiry scheduling and alarm transitions |
+| `ordinary-offer-holds.ts` | Idempotent ordinary-offer reservation and commit/release transitions in the shared principal ledger |
 | `hold-lifecycle.ts` | Hold state machine: legal transitions and conservation invariant |
 | `balance-cache.ts` | KV read-through cache for Available_Balance, non-authoritative by construction |
 | `offer-cache.ts` | Cache API wrapper: TTL 30–60s, stale-while-revalidate, full-request keying |
 | `provenance-archive.ts` | R2 write-once snapshot and receipt writer |
 | `guardrail-envelope-adapter.ts` | Supply Available_Balance to the reused Guardrail Gate without touching its interface |
+| `travel-agency-guardrail-service.ts` | Same-lane named Worker entrypoint joining the inherited Guardrail Gate to ordinary-offer atomic reservation/lifecycle |
+| `src/runtime/bounded-json.ts`, `cloudflare/workers/knowgrph-mcp/bounded-json.mjs`, `cloudflare/workers/knowgrph-payment/travelAgency/boundedJson.ts` | Incrementally enforce request/response byte ceilings before full buffering at each exposed travel boundary |
+| `cloudflare/workers/knowgrph-mcp/travel-commerce-router.mjs`, `travel-commerce-ingress.mjs`, and Agent Definition cache | Preserve inherited `routeIntent`, authenticate the public registered-offer ingress, expose the separately guarded ordinary-offer route, dispatch category-specific adapters, and own memory/KV definition caching |
 | `storage-placement-guard.ts` | Reject a D1 call from a hot path; reject a new storage system |
-| `inference-router.ts` | Workers AI primary / Containers overflow selection |
+| `inference-router.ts` | Direct Workers AI primary / authenticated Workers AI Worker overflow selection |
 | `model-license-filter.ts` | Permitted_Model_Set derivation from externalized license config |
 | `cost-log.ts` | Per-Cascade cost entry emission |
 | `deploy-boundary.ts` | Evidence-derived Deploy_Boundary state, fail-closed |
+| `readiness.ts` | Bounded configuration, binding, and dependency readiness probes |
 | `replan-surface.ts` | Mobile-first, local-first Cascade projection and render |
+| `travelMutationOutbox.ts`, `travelMutationReadiness.ts` | Atomic Shared Canvas accepted-event delivery, cold bundle seed, retry, and downstream readiness |
+| `storagePublicRouteSecurity.ts`, `storageSync{Security,Cursor,PageRows,ReadRows,ReadRuntime}.ts`, `storageDocument{RouteSecurity,ReadBounds,Stream}.ts`, `storageCrawlerCursor.ts`, `storageMediaCapability.ts`, `storagePublication.ts`, `chatRelayBodyBounds.ts`, and `cloudflare/workers/shared/publishedDoc.ts` | Authenticate inherited routes before body reads; bind active workspace roles; keyset-page sync/export/crawlers; stream documents; sign workspace/object/operation media access and verify R2 ownership; pin anonymous publication to the exact current revision/hash |
+| `knowgrph-travel-operator-gateway` | Cloudflare Access JWT verification, subject-derived operator identity, exact reconciliation proxy, and downstream capability readiness |
+| `knowgrph-travel-net-settlement-*` | Isolated service-only idempotency journal; exposes no unrelated payment or Strytree route |
+| `knowgrph-travel-settlement-executor` | Service-only provider-effect adapter and exact receipt/capability validation |
+| `knowgrph-travel-discovery` | Service-only Atlas Search→Verify adapter with strict itinerary identity |
+| `knowgrph-travel-experience-discovery` | Service-only live-experience Search→Verify adapter with strict identity, currency, integer-money, body, and deadline validation |
+| `knowgrph-travel-ollama-overflow` | Legacy-named, token-authenticated Workers AI Free overflow Worker with remote AI binding, readiness contract, and request/response bounds; it declares no Container binding |
+| `scripts/travel-commerce/demo-evidence.mjs`, `scripts/travel-commerce/run-demo.mjs`, `scripts/travel-commerce/verify-demo-browser.mjs`, `canvas/src/features/testing/TravelCommerceDemoPage.tsx` | Bounded deterministic evidence loading, CLI/headless verification, distinct headed presenter lifecycle, and mobile evidence rendering |
+| `scripts/travel-mesh-release-{plan,inventory,bindings,probes}.mjs`, `scripts/travel-mesh-release.mjs`, `scripts/install-production-release-dependencies.sh`, and protected release/runtime-gate workflows | Validate the dependency graph and complete protected configuration before any remote call; serialize exact resource/binding inventory and stop systemic access failures; install locked release dependencies, upgrade an authorized nine-Worker baseline, probe it, and restore exact prior versions or preserve ambiguous state |
+
+The release controller is upgrade-only: it refuses an absent Worker or a baseline without exactly one 100%-active version. It validates the complete protected configuration before remote inventory, runs that inventory with maximum concurrency one, and stops after the first systemic Cloudflare authentication/rate-limit failure. A separate human-authorized bootstrap/provisioning process must first create the exact nine Workers, namespaces, storage resources, routes/domains, and serving baselines, then issue `knowgrph-travel-mesh-bootstrap-receipt/v2` through protected `TRAVEL_MESH_BOOTSTRAP_RECEIPT_JSON`. Receipt v2 binds the exact Workers AI Free model/daily-neuron policy plus resource, probe, route, and disabled-subdomain digests; no image or Container entitlement is required. That bootstrap receipt is distinct from the ten delivery receipts. The release-controller row is a delivery-control source owner, not a delivery receipt; its presence, local validation, or dry run cannot close the protected receipt ledger or change `delivered_rung: undocumented`.
 
 ### Design Goals, Framed By Operating Priorities
 
-- **Minimum-viable-maximum-value** — two Durable Objects and one Worker turn "detect and suggest one alternative" into "re-plan the causally affected set and settle it once". Every other component is reused unchanged.
-- **Time-to-value** — zero new vendor, zero new credential, zero new storage category. First runnable slice is a 2-leg bundle: one flight, one downstream experience, one upstream change, one net settlement.
-- **ROI / TCO** — marginal infrastructure cost is $0 at MVP scale: Durable Objects, KV, Cache API, and R2 are all Cloudflare-native and within already-budgeted free tiers. The only new recurring cost is authored code to maintain, bounded by the 17-file decomposition above.
+- **Minimum-viable-maximum-value** — two Durable Objects and one Worker turn "detect and suggest one alternative" into "re-plan the causally affected set and settle one logical operation". Inherited public contracts remain stable while their internal delivery adapters are extended where the executable topology requires it.
+- **Time-to-value** — zero new vendor and zero new storage category. The deterministic 2-leg slice needs no remote credential; a Production deployment requires separately provisioned Atlas, provider-executor, Shared Canvas, reconciliation-operator, and operator-edge credentials before readiness can pass.
+- **ROI / TCO** — the MVP introduces no storage vendor/category; Durable Objects, KV, Cache API, and R2 are Cloudflare-native. A $0 marginal-infrastructure figure is only a pre-deployment free-tier estimate, never a readiness claim. Authored code is split by single responsibility so every owner stays below 600 lines.
 - **Token economics** — BFS, commit, rollback, netting, and ledger arithmetic are deterministic. Both new pipelines carry a $0.00/call token budget (Requirement 10). Only the reused Discovery Harnesses spend tokens, and Offer_Cache cuts how often they do.
 - **FOSS-first** — no new library for graph walking, netting, or ledger arithmetic. ADR-3's model licensing is enforced as an executable filter (`model-license-filter.ts`), not an assumption.
 - **Zero-infra** — Cloudflare-primary throughout; ADR-3 removes the last VM/SSH surface from the critical path.
@@ -74,9 +105,9 @@ Three claims, each with one mechanism and one property behind it:
 |---|---|---|
 | Re-plans **only** the causally downstream legs | BFS over outgoing edges from the changed leg, visited-set bounded | CP-1 |
 | Re-plans the whole affected set or **none of it** | one Durable Object storage transaction spanning the affected set | CP-3, CP-4 |
-| Settles the whole cascade in **one** call | net signed delta computed before a single Issuance_Service call | CP-5 |
+| Settles the whole cascade as **one logical operation** | net signed delta computed once and sent under one stable idempotency key; the first definitive path uses one transport call and ambiguous retries repeat identical identity/payload | CP-5 |
 
-Drop the third and this is L3 dressed up. The PRD says so directly, and the design keeps the settlement-call count a counted, surfaced number rather than a described intention.
+Drop the third and this is L3 dressed up. The PRD says so directly, and the design surfaces both durable settlement-attempt count and the single logical identity instead of hiding recovery retries behind prose.
 
 ## Architecture
 
@@ -86,62 +117,77 @@ flowchart TB
     RS[Re-Plan Surface\nNEW — local-first view]
   end
 
-  subgraph Edge["Cloudflare Edge Runtime — already provisioned"]
-    SCN[Shared Canvas Node Store\nREUSED UNMODIFIED]
+  subgraph Operator["Operator control plane — Cloudflare Access"]
+    OP[Authenticated operator]
+    OPG[Reconciliation Gateway\nNEW — exact route + JWT/JWKS]
+  end
+
+  subgraph Edge["Target Cloudflare Edge Runtime — provision before delivery"]
+    SCN[Shared Canvas Node Store\nEXTENDED — atomic travel outbox]
     ROW["Re-optimization Worker\nNEW — Worker"]
     RD[reopt-dispatch\nNEW — fan-out/fan-in]
     BGS[("Bundle Graph Store\nNEW — DO/SQLite: legs + edges")]
-    TO[topo-order\nNEW — incremental]
+    TO[topo-order\nNEW — deterministic + persisted]
     EL[("Envelope Ledger\nNEW — DO/SQLite: envelope + holds")]
     HL[hold-lifecycle\nNEW]
     GG[Guardrail Gate\nREUSED — envelope-aware]
     GEA[guardrail-envelope-adapter\nNEW]
+    GGS[TravelAgencyGuardrailService\nNEW — same-lane named entrypoint]
     KV[("Balance_Cache\nNEW — KV")]
     OC[("Offer_Cache\nNEW — Cache API")]
     R2[("Provenance_Archive\nNEW — R2, write-once")]
-    AR[Agent Registry/Router\nREUSED UNMODIFIED]
+    AR[Agent Registry/Router\nEXTENDED — cached category dispatch]
+    FD[Flight Discovery Adapter\nNEW — Atlas Search→Verify]
+    XD[Experience Discovery Adapter\nNEW — strict Search→Verify]
+    PAY[("Net Settlement Boundary\nNEW — service-only DO journal")]
+    NSE[Settlement Executor\nNEW — exact provider receipt]
     D1[("D1\nREUSED — aggregate/reporting only")]
     SPG[storage-placement-guard\nNEW]
   end
 
-  subgraph Agents["Registered-Agent zone — OUTSIDE trust boundary"]
-    DH[Discovery Harnesses]
+  subgraph Ext["External provider zone — outside trust boundary"]
+    ACCESS[Cloudflare Access JWKS]
+    ATLAS[Atlas API]
+    EXP[Verified live-experience provider]
+    ISS[Operator-owned Issuance Service]
   end
 
-  subgraph Ext["External API zone — REUSED UNMODIFIED"]
-    ISS[Issuance Service] --> SX[StraitsX Card MCP Gateway]
-    SV[Settlement Verifier] --> AVAX[Avalanche Data API + Snowtrace]
-    ND[Notification Dispatcher] --> TG[Telegram Bot API]
-  end
-
-  SCN -->|mutation event: one leg_id| ROW
+  OP --> OPG
+  OPG -->|verify issuer/audience/signature| ACCESS
+  OPG -->|exact reconciliation decision; sub-derived operator| ROW
+  SCN -->|persisted outbox: bundle seed then mutation| ROW
   ROW -->|BFS read| BGS
   BGS --- TO
   ROW --> RD
   RD -->|parallel Re_Quote| AR
   AR -->|cached lookup| OC
-  AR --> DH
-  DH -->|Typed_Offer| RD
+  AR -->|flight| FD --> ATLAS
+  AR -->|local-experience| XD --> EXP
+  FD -->|verified Typed_Offer| RD
+  XD -->|verified Typed_Offer| RD
   RD -->|all results| ROW
   ROW -->|envelope check per leg| GG
   GG --- GEA --> EL
+  AR -->|guarded ordinary offer only| GGS --> GG
   EL --- HL
   GEA -->|fast path read| KV
   EL -->|invalidate on transition| KV
   ROW -->|atomic commit / rollback| BGS
-  ROW -->|net settlement, exactly 1| ISS
-  ISS --> SV --> ND
+  ROW -->|one logical net settlement| PAY
+  PAY -->|same idempotency identity| NSE --> ISS
   ROW -->|write-once on commit| R2
   ROW -->|Cascade projection| SCN --> RS
   SPG -.->|reject hot-path D1| D1
 
   classDef new fill:#e8f4ff,stroke:#2b6cb0,stroke-width:2px
-  classDef reused fill:#f7f7f7,stroke:#888,stroke-dasharray:4 3
-  class ROW,RD,BGS,TO,EL,HL,GEA,KV,OC,R2,RS,SPG new
-  class SCN,GG,AR,DH,ISS,SV,ND,SX,AVAX,TG,D1 reused
+  classDef extended fill:#fff7e6,stroke:#b7791f,stroke-width:2px
+  classDef required fill:#fff5f5,stroke:#c53030,stroke-dasharray:4 3
+  class ROW,RD,BGS,TO,EL,HL,GEA,GGS,KV,OC,R2,RS,SPG,OPG,FD,XD,PAY,NSE new
+  class SCN,AR extended
+  class EXP required
 ```
 
-Boundary reading: the only edges Knowgrph adds are `SCN → ROW`, `ROW ↔ BGS`, `ROW → RD → AR`, `GG → EL`, `ROW → ISS`, `ROW → R2`, and `ROW → SCN → RS`. `ISS → SV → ND` is carried over untouched. The Registered-Agent zone still touches nothing but the Router, in both directions — a Re_Quote is an ordinary Discovery dispatch, not a new privileged path.
+Boundary reading: Shared Canvas reaches the service-only Worker only through its durable outbox; providers remain behind category-specific Router bindings; payment success requires an exact executor receipt rather than a journal row; and irreversible reconciliation is reachable only through the Access-authenticated exact-route gateway. The experience adapter is implemented and lane-bound, but its committed sentinel provider configuration deliberately keeps Production readiness at 503 until an operator supplies a verified live origin, catalogue, credential, and Search→Verify receipt. Existing public component operations remain compatible; the added edges use separately named travel contracts.
 
 ### Two Reads, Two Different Jobs
 
@@ -154,18 +200,20 @@ The in-memory adjacency list (Requirement 8.5) is a *performance* cache of edge 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant SCN as Shared Canvas (reused)
+  participant SCN as Shared Canvas + outbox (extended)
   participant ROW as Re-opt Worker (new)
   participant BGS as Bundle Graph Store (new)
   participant RD as reopt-dispatch (new)
-  participant AR as Agent Registry/Router (reused)
+  participant AR as Agent Registry/Router (extended)
   participant GG as Guardrail Gate (reused)
   participant EL as Envelope Ledger (new)
-  participant ISS as Issuance Service (reused)
+  participant PAY as Isolated net-settlement boundary (new)
+  participant EXE as Provider-effect executor (new)
   participant R2 as Provenance Archive (new)
 
+  SCN->>SCN: operator map → bundle_id; transactionId → event_id
   SCN->>ROW: Mutation_Event { bundle_id, leg_id, event_id }
-  ROW->>BGS: snapshot Committed_Snapshot, read legs+edges
+  ROW->>BGS: begin Cascade, capture prior legs, read legs+edges
   BGS->>BGS: BFS outgoing from leg_id, visited-set bounded
 
   alt zero outgoing edges
@@ -189,152 +237,79 @@ sequenceDiagram
       EL-->>GG: reserved | insufficient-envelope
     end
     alt every leg passed
-      ROW->>BGS: atomic commit of whole Affected_Set
-      ROW->>EL: transition Cascade holds reserved → committed
+      ROW->>BGS: durably prepare the complete Affected_Set
       ROW->>ROW: net = Σ(new − prior) across Affected_Set
       alt net ≠ 0
-        ROW->>ISS: exactly one settlement call (net)
+        ROW->>PAY: one logical net-settlement identity
+        PAY->>EXE: exact same key + signed amount/currency
+        alt definitive pre-effect rejection
+          EXE-->>PAY: proof-bearing no-effect rejection
+          PAY-->>ROW: definitive non-retryable rejection
+          ROW->>BGS: roll back prepared Cascade
+          ROW->>EL: release Cascade holds
+          ROW-->>SCN: rolled-back outcome
+        else retryable or ambiguous response
+          EXE-->>PAY: retryable / outcome unknown
+          PAY-->>ROW: bounded ambiguous result
+          ROW->>BGS: persist pending recovery
+          ROW-->>SCN: pending outcome; prior projection remains visible
+        else settled
+          EXE-->>PAY: exact provider-backed effect receipt
+          PAY-->>ROW: matching settlement/provider ids + idempotency key
+          ROW->>EL: commit Cascade holds
+          ROW->>BGS: atomically finalize the complete Affected_Set
+        end
       else net = 0
         ROW->>ROW: record zero-net, zero settlement calls
+        ROW->>EL: commit Cascade holds
+        ROW->>BGS: atomically finalize the complete Affected_Set
       end
       ROW->>R2: write-once snapshot + receipt
       ROW-->>SCN: committed Cascade projection
-    else any leg rejected, timed out, or settlement failed
-      ROW->>BGS: restore Committed_Snapshot
+    else any Re_Quote / guardrail decision rejected or timed out
+      ROW->>BGS: roll back to captured prior legs
       ROW->>EL: transition Cascade holds reserved → released
       ROW-->>SCN: rolled-back Cascade + reason
-      Note over ROW,ISS: zero settlement calls, zero partial retries
+      Note over ROW,PAY: zero settlement attempts, zero partial retries
     end
   end
 ```
 
-Two deliberate refusals in that diagram. There is no per-leg retry branch — a single rejection aborts the set, because partial retry is exactly how a mixed state gets created. And there is no recursive trigger from the commit back into `SCN → ROW`; one Mutation_Event is one pass (Requirement 6.1), so a cascade cannot chase its own tail.
+Three deliberate refusals in that diagram. There is no per-leg retry branch — a single Re_Quote or guardrail rejection aborts the set, because partial retry is exactly how a mixed state gets created. There is no rollback on an ambiguous settlement attempt: the prior graph projection remains visible, the protected holds remain durable, and recovery retries the same idempotency key and request identity. And there is no recursive trigger from finalization back into `SCN → ROW`; one Mutation_Event is one pass (Requirement 6.1), so a cascade cannot chase its own tail.
 
 ## Components and Interfaces
 
-All types live in `bundle-types.ts`, which emits zero runtime value. Illegal states are made unrepresentable where the type system can carry the weight, so a mistake is a compile error rather than a review comment.
-
-```ts
-// ---- Branded identities: a bundle_id can never be passed where a leg_id is expected ----
-type BundleId = string & { readonly __brand: 'BundleId' };
-type LegId = string & { readonly __brand: 'LegId' };
-type OfferId = string & { readonly __brand: 'OfferId' };
-type PrincipalId = string & { readonly __brand: 'PrincipalId' };
-type HoldId = string & { readonly __brand: 'HoldId' };
-type CascadeId = string & { readonly __brand: 'CascadeId' };
-type EventId = string & { readonly __brand: 'EventId' };
-type SnapshotId = string & { readonly __brand: 'SnapshotId' };
-type ModelId = string & { readonly __brand: 'ModelId' };
-type MinorUnits = number & { readonly __brand: 'MinorUnits' }; // integer minor units, never float
-
-// ---- Flat adjacency: two tables, no graph engine (ADR-4) ----
-interface LegRow {
-  readonly bundleId: BundleId;
-  readonly legId: LegId;
-  readonly principalId: PrincipalId;
-  readonly committedOfferId: OfferId | null;
-  readonly committedAmount: MinorUnits | null;
-  readonly category: string;
-}
-interface EdgeRow {
-  readonly bundleId: BundleId;
-  readonly fromLegId: LegId;   // upstream: changing this may invalidate `toLegId`
-  readonly toLegId: LegId;     // downstream
-}
-
-// ---- Cascade outcome: a discriminated union, so "committed with a rollback reason" is unrepresentable ----
-type CascadeOutcome =
-  | { readonly kind: 'no-op'; readonly cascadeId: CascadeId; readonly reason: 'no-outgoing-edges' }
-  | { readonly kind: 'committed'; readonly cascadeId: CascadeId; readonly affected: readonly LegId[];
-      readonly netAmount: MinorUnits; readonly settlementCalls: 0 | 1; readonly snapshotId: SnapshotId }
-  | { readonly kind: 'rolled-back'; readonly cascadeId: CascadeId; readonly affected: readonly LegId[];
-      readonly reason: RollbackReason; readonly restoredSnapshotId: SnapshotId }
-  | { readonly kind: 'rejected'; readonly cascadeId: CascadeId; readonly reason: RejectReason };
-
-type RejectReason =
-  | 'unknown-leg' | 'cyclic-dependency' | 'store-unavailable' | 'cross-principal-bundle'
-  | 'scale-boundary-legs' | 'scale-boundary-edges';
-type RollbackReason =
-  | 'requote-rejected' | 'requote-missing' | 'requote-malformed' | 'insufficient-envelope'
-  | 'cascade-timeout' | 'settlement-failed' | 'stale-offer-cache-entry';
-
-// ---- Hold lifecycle: terminal states carry no transition target ----
-type HoldState = 'reserved' | 'committed' | 'released';
-interface Hold {
-  readonly holdId: HoldId;
-  readonly principalId: PrincipalId;
-  readonly offerId: OfferId;
-  readonly cascadeId: CascadeId | null;
-  readonly amount: MinorUnits;
-  readonly state: HoldState;
-}
-type ReserveResult =
-  | { readonly kind: 'reserved'; readonly hold: Hold; readonly availableAfter: MinorUnits }
-  | { readonly kind: 'rejected'; readonly reason: 'insufficient-envelope' | 'envelope-unavailable'
-      | 'illegal-transition'; readonly availableAtCheck: MinorUnits | null };
-```
+`bundle-types.ts` is the type-only shared contract owner. It exports closed readonly rows, branded identities, Cascade/Hold/Reserve unions, and operational DTOs, while `bundle-runtime.ts` owns runtime bounds, strict identifier/minor-unit decoders, collision-free event-scoped Cascade identity, and stable validation. Every operational `*Minor` field is now a branded `MinorUnits` value, boundary decoders validate raw JSON/SQL/provider values before branding, the module emits zero runtime values, and recursive type assertions reject any future raw-number money field.
 
 ### Bundle Graph Store — `bundle-graph-store.ts`
 
-One Durable Object per `bundle_id` (Requirement 7.6). Owns two SQLite tables and nothing else.
+One Durable Object is addressed per `bundle_id` (Requirement 7.6). `bundle-graph-store.ts` coordinates schema, persistence, validation, record mapping, observability, and recovery helpers without absorbing those responsibilities into the main class. Its current public operations are `initBundle`, `insertLeg`, `insertEdge`, `beginCascade`, `prepareCommit`, settlement-claim/finalization operations, `rollbackCascade`, `getSnapshot`, cascade/session/cost reads, alarm recovery, and the authenticated hibernatable WebSocket event route.
 
-```ts
-interface BundleGraphStore {
-  // Structure mutation — each rejects rather than truncating (Requirements 7.3–7.5)
-  insertLeg(row: LegRow): { kind: 'ok' } | { kind: 'rejected'; reason: RejectReason; observedCount: number };
-  insertEdge(row: EdgeRow): { kind: 'ok' } | { kind: 'rejected'; reason: RejectReason; observedCount: number };
+`beginCascade` re-reads the current `legs` and `edges`, computes the affected set, captures the exact prior legs, records a Session Log start entry, and returns either a terminal no-op/rejection, a resumable existing record, or a new plan. One bundle admits at most one non-terminal Cascade: a distinct event returns `bundle-busy`, and `insertLeg`/`insertEdge` return `bundle-busy` for the same interval. This structural freeze is the version fence for rollback: the Edge set and unaffected Legs cannot change while the Cascade is active, so restoring the captured affected Legs recreates the complete pre-Cascade `legs`/`edges` projection byte-for-byte. A newly inserted Leg may not arrive already committed (`committed-leg-insertion-unsupported`); commitments enter through initialization or atomic finalization only.
 
-  // Structure read — the Affected_Set walk (Requirement 1)
-  affectedSet(changed: LegId): { kind: 'ok'; order: readonly LegId[] } | { kind: 'rejected'; reason: RejectReason };
+`prepareCommit` accepts only a quote set exactly equal to the recorded affected set. The graph projection remains on the prior snapshot while the durable prepared record moves through settlement and finalization; `commitPreparedCascade` applies the complete set transactionally, while `rollbackCascade` restores the prior projection.
 
-  // Authorization read, deliberately separate from the structure read
-  isPresent(leg: LegId): boolean;
-
-  // Atomic commit / rollback (Requirement 2)
-  snapshot(): SnapshotId;
-  commitAffectedSet(cascadeId: CascadeId, commits: readonly { legId: LegId; offerId: OfferId; amount: MinorUnits }[]):
-    { kind: 'committed'; snapshotId: SnapshotId } | { kind: 'rejected'; reason: RollbackReason };
-  restore(snapshotId: SnapshotId): { kind: 'restored'; snapshotId: SnapshotId };
-
-  // Declared limits as readable constants, so a check asserts against the declaration (Requirement 7.8)
-  readonly limits: { readonly maxLegs: 20; readonly maxEdges: 20 };
-}
-```
-
-`affectedSet` is a queue-based BFS over the in-memory adjacency list with a visited set. It never revisits a Leg (Requirement 1.4), which is what bounds it at O(affected) rather than O(V+E) and what makes the 50 ms budget for ≤8 legs unremarkable rather than optimistic.
+`affectedSet` is a queue-based BFS with a visited set. It never revisits a Leg (Requirement 1.4), which bounds it and makes the 50 ms budget for ≤8 legs unremarkable rather than optimistic.
 
 Cycle handling is deliberately split. `insertEdge` rejects a cycle at write time (Requirement 7.5) — that is the real defense. `affectedSet` also rejects a reachable cycle at read time (Requirement 1.8) — that is the belt to the write-time braces, because a cycle that somehow exists must fail the walk rather than loop it.
 
-### Incremental Topological Order — `topo-order.ts`
+### Deterministic Topological Order — `topo-order.ts`
 
-Maintained on Edge insertion rather than recomputed per Mutation_Event (Requirement 7.9, Computation recommendation "Topological order"). Tie-break is deterministic and stated: ascending `legId` among Legs of equal depth. Without a stated tie-break, "identical to a full recompute" (Requirement 7.10) would not be a testable claim.
+Computed and persisted on bundle initialization and structure insertion, and read without a full sort per Mutation_Event (Requirement 7.9). The ready-set tie-break is ascending `legId`, so the output is deterministic. CP-15 now generates non-empty DAG edge sets and proves forward/reverse insertion orders converge with full recomputation over 300 shrinking runs.
 
 ### Envelope Ledger — `envelope-ledger.ts`
 
 One Durable Object per `principal_id` (Requirement 4.4). The atomicity comes from the actor model, not from a lock (Requirement 8.4).
 
-```ts
-interface EnvelopeLedger {
-  // One indivisible operation: compute, compare, reserve (Requirement 4.2)
-  checkAndReserve(offerId: OfferId, amount: MinorUnits, cascadeId: CascadeId | null): ReserveResult;
+The ledger owns both reservation kinds in the same principal-scoped actor. `init` seeds prior committed positions idempotently; `checkAndReserveCascade` atomically replaces each affected leg's prior commitment with the proposed amount when the envelope permits it; `checkAndReserveOffer` creates one idempotent ordinary-offer Hold, returns an exact replay while it remains reserved or committed, and rejects a replay after release so an old operation identity cannot resurrect value; `commitOffer`/`releaseOffer` close that Hold; `commitCascade`/`releaseCascade` close a Cascade set; `quarantineCascade` removes attempted ambiguous settlement Holds from TTL expiry without returning their balance; `resolveReconciliation` applies an audited idempotent commit/release; `getAvailableBalance` and `getHolds` are server-side-only Durable Object RPCs. Ordinary and Cascade reservations contend against the same `Available_Balance` synchronously before either method yields, so mixed traffic cannot overspend. No Worker HTTP route exposes Available_Balance to a client.
 
-  // Lifecycle (Requirement 5.1–5.2), idempotent at terminal states
-  commitHold(holdId: HoldId): { kind: 'committed' | 'noop' } | { kind: 'rejected'; reason: 'illegal-transition' };
-  releaseHold(holdId: HoldId): { kind: 'released' | 'noop' } | { kind: 'rejected'; reason: 'illegal-transition' };
-  releaseCascade(cascadeId: CascadeId): { kind: 'released'; count: number };
+The conservation invariant `total_budget = available + Σreserved + Σquarantined + Σcommitted` (Requirement 5.4) is asserted after every transition, in the same operation, not by a background reconciler. A reconciler would turn a correctness invariant into an eventually-detected discrepancy.
 
-  // Server-side only — no client-facing scope exists (Requirement 5.10, stated gap)
-  availableBalance(): MinorUnits;
-}
-```
-
-The conservation invariant `total_budget = available + Σreserved + Σcommitted` (Requirement 5.4) is asserted after every transition, in the same operation, not by a background reconciler. A reconciler would turn a correctness invariant into an eventually-detected discrepancy.
-
-Amounts are integer minor units throughout. Floating-point money in a ledger whose whole purpose is "two agents can never jointly overspend" would be an odd place to accept representation error.
+Amounts are non-negative safe-integer minor units throughout, and each quote currency must equal the ledger's uppercase three-letter settlement currency. Production accepts only provider-`verified` prices; `deterministic-demo` is restricted to non-production lanes. The typed fences are `quote-currency-mismatch`, `envelope-currency-conflict`, and `quote-unverified`.
 
 ### Guardrail Envelope Adapter — `guardrail-envelope-adapter.ts`
 
-The reused Guardrail Gate keeps its interface exactly (Requirement 4.9, 12.2). The adapter supplies Available_Balance to it: Balance_Cache first, Envelope_Ledger on miss, Envelope_Ledger wins on divergence (Requirement 5.5–5.6). The adapter exists so the envelope dependency lives in one file that can be deleted without touching the gate — the smallest possible blast radius for the one reused component this increment extends.
+The reused Guardrail Gate keeps its interface exactly (Requirement 4.9, 12.2). The adapter supplies Available_Balance to it: Balance_Cache first, Envelope_Ledger on miss, Envelope_Ledger wins on divergence (Requirement 5.5–5.6), then the ordinary-offer path performs the authoritative atomic reservation in that same ledger before returning success. `TravelAgencyGuardrailService` is a same-lane named Worker entrypoint bound into Agent Registry/Router; the Router's Edge_Orchestrator operation cannot return a quote without this hop, while the inherited internal Reopt_Worker `routeIntent` contract remains separately authorized and Reopt performs its mandatory batch `checkAndReserveCascade`. Commit/release bind the original principal, operation identity, and registered agent. The adapter exists so the envelope dependency lives in one narrow integration seam without altering the inherited Gate signature.
 
 ### Re-optimization Worker — `reopt-worker.ts`
 
@@ -348,6 +323,14 @@ interface ReoptWorker {
 
 Idempotence (Requirement 2.6) is keyed on `(bundleId, legId, eventId)`. A repeat returns the recorded outcome for that key rather than re-running the Cascade, so a duplicated Shared Canvas notification cannot double-settle.
 
+### Shared Canvas Trigger, Discovery, and Settlement Boundaries
+
+The Shared Canvas room persists the accepted node state and its travel outbox record in one Durable Object transaction. Its immutable operator map resolves `(workspaceId, roomId, nodeId)` to an exact `bundle_id` plus initialization seed; the outbox copies the accepted node's single `leg_id`, derives `event_id` only from its inherited `transactionId`, idempotently `PUT`s the cold bundle/envelope before `POST`ing the internal `{leg_id,event_id}` mutation beneath the bundle URL, and retries transient/busy responses. No caller supplies a new `bundle_id` or `event_id` field. Storage readiness requires the map, distinct shared token, service binding, downstream `/readyz`, and authenticated `/v1/runtime` response, with a bound large enough for the travel Worker's documented cold dependency probe rather than a shorter false-negative timeout.
+
+MCP routes a registered flight intent to the service-only Atlas adapter and an `experience` intent (the local-experience leg) only to the separately bound first-party experience adapter. Production and staging register both categories and probe each exact binding concurrently; absence, sentinel configuration, or a malformed capability is a 503, never a deterministic fallback. Atlas readiness performs both Search and Verify against the same selected routing identity, retaining exact segment origin, destination, dates, direction, chain, permitted carrier, and seats. Experience readiness likewise performs authenticated Search→Verify and locks catalogue, location, date, local time, provider, product, party, currency, and safe-integer minor price. Price/currency checks alone cannot produce `verified`. Each discovery phase has one 5.5-second child bound and the 10-second Cascade reserves 2.5 seconds for ledger, settlement, and persistence.
+
+Each lane binds a dedicated service-only `knowgrph-travel-net-settlement-*` Worker with its own SQLite Durable Object and lane-matched executor; unrelated public payment and Strytree routes are absent from that entrypoint. Success requires an exact provider-backed charged/refunded receipt; a journal-only `200`, malformed receipt, timeout, or outage remains unavailable. `/readyz` requires the SQLite store and the executor's bounded authenticated `settleNet` capability probe. Ambiguous attempted effects enter non-expiring custody. A dedicated Cloudflare Access gateway validates signature, issuer, audience, expiry, and subject, derives the audit `operator_id` from that verified subject, and forwards only the exact reconciliation operation through a server-held distinct token; its readiness calls a non-mutating operator-auth capability on travel before it can turn green.
+
 ### Concurrent Dispatch — `reopt-dispatch.ts`
 
 Fan-out/fan-in with a wall-clock cap (Requirement 6.2, 6.4). All Re_Quotes are issued before any is awaited, and all are awaited together, so wall-clock time is the slowest single leg. Every settled result is inspected; a rejection anywhere aborts the set (Requirement 6.3) after all branches settle, so no in-flight Re_Quote is orphaned mid-cascade.
@@ -356,11 +339,11 @@ Fan-out/fan-in with a wall-clock cap (Requirement 6.2, 6.4). All Re_Quotes are i
 
 | Unit | Store | Key | Bound | Authority |
 |---|---|---|---|---|
-| `balance-cache.ts` | KV | `envelope_balance:{principalId}` | invalidated on every Hold transition, before the transition returns | **never authoritative** — DO wins on divergence |
-| `offer-cache.ts` | Cache API | full Re_Quote request identity, hashed | TTL 30–60 s, stale-while-revalidate | advisory; a commit against an expired entry with no completed revalidation is refused |
-| `provenance-archive.ts` | R2 | `provenance/{bundleId}/{cascadeId}` | write-once; overwrite rejected | archival only, off the hot path |
+| `balance-cache.ts` | KV | `available-balance:{principalId}` | 60-second entry, invalidated on Hold mutation and refreshed from the ledger | **never authoritative** — the adapter always confirms with the DO |
+| `offer-cache.ts` | Cache API | SHA-256 of stable full Re_Quote identity | soft TTL 30 s, hard TTL 60 s; advisory reads may use SWR | commit-path `requote` waits for a fresh result after soft TTL |
+| `provenance-archive.ts` | R2 | `provenance/{encodedBundleId}/{encodedCascadeId}.json` | conditional write-once; identical replay is idempotent, digest conflict rejected | archival only, off the hot path |
 
-Two invariants make these safe rather than merely fast. Balance_Cache is *structurally* non-authoritative: `balance-cache.ts` exposes a read that returns `{ value, mustConfirm: true }`, so a caller cannot use it for a commit decision without also calling the ledger — the confirmation is in the type, not in a code review. Offer_Cache entries carry their fetch timestamp and TTL, and `reopt-worker.ts` refuses a commit against an entry past TTL whose revalidation has not completed (Requirement 9.4), which is the one place a stale cache could otherwise buy something with the wrong price.
+Two invariants make these safe rather than merely fast. Balance_Cache is operationally non-authoritative: `confirmAvailableBalance` reads the cache but always calls `EnvelopeLedger.getAvailableBalance`; divergence invalidates the entry and the authoritative revision is written back. Offer_Cache entries carry their fetch timestamp and request digest; the commit-path `requote` returns a soft-fresh entry or awaits refresh, while the separate advisory operation is the only path allowed to serve a stale-within-hard-TTL value.
 
 ### Storage Placement Guard — `storage-placement-guard.ts`
 
@@ -370,245 +353,15 @@ Wraps the D1 client. A call arriving with a hot-path caller tag is rejected with
 
 `model-license-filter.ts` reads license declarations from externalized configuration (Requirement 11.5) and derives the Permitted_Model_Set. It fails closed: unreadable config permits zero model (Requirement 11.7), because a license filter that degrades to "allow everything" on error is not a filter.
 
-`inference-router.ts` selects Workers AI for a model in the Permitted_Model_Set, Containers-with-Ollama for a model outside the hosted catalog, and rejects a model whose declared license is neither Apache-2.0 nor MIT. Every call records path, model, declared license, and cost (Requirement 11.6), and neither path is recorded as free (Requirement 11.8).
+`inference-router.ts` selects the direct Workers AI binding for the primary permitted model and the separately token-authenticated overflow Worker for the overflow declaration of that same permitted provider model. The overflow Worker uses a remote Workers AI binding, declares no Container, and rejects any other provider-model identity. Every call records path, model, declared license, and metering metadata (Requirement 11.6); the 10,000-daily-neuron free policy is an explicit bounded allowance, not an unlimited zero-cost claim (Requirement 11.8).
 
 ### Re-Plan Surface — `replan-surface.ts`
 
 Projects Cascade outcomes through the reused Shared Canvas Node Store. Local replica first, edge as convergence peer (Requirement 14.4). Semantic list and description elements, 320 CSS px without horizontal scroll, 44×44 px targets, accessible name per Leg row (Requirement 14.1–14.3, 14.8). A rolled-back Cascade renders as rolled back with its reason — the `CascadeOutcome` union makes rendering it as committed unrepresentable rather than merely discouraged (Requirement 14.7).
 
-## Data Models
+## Responsibility Shards
 
-### Durable Object SQLite — Bundle Graph Store
+- [`design-data-correctness.md`](./design-data-correctness.md) owns executable data models, correctness properties, and error disposition.
+- [`design-verification.md`](./design-verification.md) owns testing strategy, cost/TCO evidence, deploy boundaries, implementation evidence, and operator decisions.
 
-```sql
-CREATE TABLE legs (
-  leg_id              TEXT PRIMARY KEY,
-  principal_id        TEXT NOT NULL,
-  committed_offer_id  TEXT,
-  committed_amount    INTEGER,          -- minor units, never REAL
-  category            TEXT NOT NULL
-);
-CREATE TABLE edges (
-  from_leg_id TEXT NOT NULL REFERENCES legs(leg_id),
-  to_leg_id   TEXT NOT NULL REFERENCES legs(leg_id),
-  PRIMARY KEY (from_leg_id, to_leg_id)
-);
-CREATE INDEX edges_from ON edges(from_leg_id);   -- the only index BFS needs
-CREATE TABLE snapshots (
-  snapshot_id TEXT PRIMARY KEY,
-  taken_at    TEXT NOT NULL,
-  payload     BLOB NOT NULL              -- serialized legs+edges, the sole rollback target
-);
-```
-
-`bundle_id` is the Durable Object's own identity, so it is deliberately absent from every row. Storing it would invite a cross-bundle query this design does not want to be possible.
-
-### Durable Object SQLite — Envelope Ledger
-
-```sql
-CREATE TABLE envelope (
-  principal_id TEXT PRIMARY KEY,
-  total_budget INTEGER NOT NULL          -- minor units
-);
-CREATE TABLE holds (
-  hold_id     TEXT PRIMARY KEY,
-  offer_id    TEXT NOT NULL,
-  cascade_id  TEXT,                      -- null for a non-cascade offer
-  amount      INTEGER NOT NULL,
-  state       TEXT NOT NULL CHECK (state IN ('reserved','committed','released'))
-);
-CREATE INDEX holds_active ON holds(state) WHERE state IN ('reserved','committed');
-CREATE INDEX holds_cascade ON holds(cascade_id);
-```
-
-Available_Balance is computed, never stored. A stored balance is a second source of truth for the one number this component exists to be authoritative about.
-
-### D1 — Aggregate Only
-
-D1 holds cross-key rollups for the operator dashboard and platform audit: cascade counts, settlement-call ratios, rollback rates, envelope utilization distributions. No Cascade or check-and-reserve path reads or writes it (Requirement 8.1–8.3).
-
-## Correctness Properties
-
-Sixteen properties, each with its class named so coverage gaps are visible by class rather than by count. Every one runs with shrinking enabled and its seed recorded.
-
-| # | Property | Class | Validates |
-|---|---|---|---|
-| CP-1 | Affected_Set equals exactly the downstream-reachable set, excluding the changed leg | Invariant | Req 1.1–1.3 |
-| CP-2 | BFS visits each leg at most once and terminates on every acyclic graph within the scale boundary | Invariant | Req 1.4, 1.6 |
-| CP-3 | No observable state has some affected legs on new offers and others on stale offers | Invariant | Req 2.1–2.3 |
-| CP-4 | Rollback restores state byte-identical to the preceding Committed_Snapshot | Round Trip | Req 2.4 |
-| CP-5 | Settlement-call count is 1 for any non-zero net and any affected-set size; 0 for zero net or rollback | Metamorphic | Req 3.1, 3.3, 3.4 |
-| CP-6 | No accepted offer exceeds Available_Balance at accept-time under arbitrary concurrent interleaving | Invariant | Req 4.1, 4.3, 4.5, 4.6 |
-| CP-7 | `total_budget = available + Σreserved + Σcommitted` after every transition | Invariant | Req 5.4 |
-| CP-8 | Repeated commit or release of the same hold is a no-op returning the current state | Idempotence | Req 5.2 |
-| CP-9 | A repeated Mutation_Event with the same event key produces at most one commit and one settlement call | Idempotence | Req 2.6 |
-| CP-10 | Bundle serialize → deserialize yields an identical leg and edge set | Round Trip | Req 2.4, 8.6 |
-| CP-11 | A divergent Balance_Cache value never changes a commit decision; the ledger value wins and the entry is invalidated | Metamorphic | Req 5.6, 9.2 |
-| CP-12 | No commit occurs against an Offer_Cache entry past TTL whose revalidation has not completed | Invariant | Req 9.3, 9.4 |
-| CP-13 | Insertions past 20 legs or 20 edges, cycles, and cross-principal legs are rejected with the correct typed reason and mutate nothing | Error Condition | Req 7.3–7.5, 7.7 |
-| CP-14 | Every Cascade emits exactly one Cost_Log entry, and orchestration token counts are zero | Invariant | Req 10.1, 10.2, 10.7 |
-| CP-15 | Incremental topological order converges to the full-recompute order for any insertion interleaving of the same edge set | Confluence | Req 7.9, 7.10 |
-| CP-16 | A Provenance_Archive write for an existing key is rejected; archive state after N identical writes equals state after 1 | Idempotence | Req 2.7, 9.7 |
-
-Class coverage: 6 invariant, 2 round trip, 3 metamorphic, 3 idempotence, 1 error condition, 1 confluence. CP-6 and CP-3 carry the highest run counts because they are the two hard invariants the PRD states as `0` rather than as targets to approach.
-
-## Error Handling
-
-Fail-closed throughout, inherited from the travel document's posture. Every failure resolves to a typed reason, never to a permissive default.
-
-| Failure | Detected by | Resolution | Observable result |
-|---|---|---|---|
-| Changed leg absent | `affectedSet` | reject, mutate nothing | `rejected: unknown-leg` |
-| Cycle reachable from changed leg | `affectedSet` | reject, mutate nothing | `rejected: cyclic-dependency` |
-| Bundle Graph Store unreachable | `reopt-worker` preflight | reject before any Re_Quote | `rejected: store-unavailable` |
-| One Re_Quote rejected / missing / malformed | `reopt-dispatch` fan-in | abort whole set, restore snapshot, release holds | `rolled-back: requote-*` |
-| Cascade wall-clock cap exceeded | `reopt-dispatch` | abort, restore, release | `rolled-back: cascade-timeout` |
-| Envelope insufficient for any leg | `envelope-ledger` | abort, restore, release | `rolled-back: insufficient-envelope` |
-| Envelope unreachable | `guardrail-envelope-adapter` | gate rejects offer, zero holds, zero downstream | `rejected: envelope-unavailable` |
-| Offer_Cache entry past TTL, revalidation incomplete | `reopt-worker` pre-commit check | refuse commit, restore, release | `rolled-back: stale-offer-cache-entry` |
-| Issuance_Service settlement call fails | `reopt-worker` | restore snapshot, release holds | `rolled-back: settlement-failed` |
-| Provenance_Archive write fails after commit | `provenance-archive` | **retain the commit**, record archive-deferred | committed + `archive-deferred` record |
-| Archive key already exists | `provenance-archive` | reject the overwrite | `archive-immutable` |
-| Hot-path D1 call | `storage-placement-guard` | reject, name the caller | `storage-placement` violation |
-| Model license neither Apache-2.0 nor MIT | `model-license-filter` | reject primary route | `license-excluded` + model + license |
-| License config unreadable | `model-license-filter` | permit zero model | `license-configuration-unavailable` |
-| Prod mirror or Cloudflare mutation attempted | `deploy-boundary` | reject before the request | boundary violation + component + target |
-
-One asymmetry is deliberate: an archive failure after a successful commit does **not** roll back (Requirement 2.8). The commit is the principal's real booking state; the archive is provenance. Rolling back a correct booking because a write-behind archival call failed would trade a real outcome for a bookkeeping convenience.
-
-## Testing Strategy
-
-Property tests use `fast-check` (MIT) as the only new dependency, dev-only, pinned exact. Every payment-path test runs against mocked StraitsX and Avalanche clients; zero test issues a real payment call.
-
-### Generators
-
-| Generator | Produces | Used by |
-|---|---|---|
-| `arbBundle` | acyclic `legs`/`edges` within the scale boundary, single principal, 1–20 legs | CP-1, CP-2, CP-3, CP-4, CP-10, CP-15 |
-| `arbBundleWithCycle` | edge sets containing at least one cycle | CP-13 |
-| `arbOversizeBundle` | insertion sequences crossing 20 legs or 20 edges | CP-13 |
-| `arbMutationSequence` | mutation events including repeats with identical event keys | CP-9 |
-| `arbRequoteResults` | per-leg pass / reject / missing / malformed / timeout outcomes | CP-3, CP-5, CP-12 |
-| `arbConcurrentOffers` | 2–16 offers for one principal with interleaved arrival orders | CP-6, CP-7, CP-8 |
-| `arbHoldTransitions` | legal and illegal transition sequences, including repeats at terminal states | CP-7, CP-8 |
-| `arbCacheDivergence` | Balance_Cache / ledger value pairs, agreeing and diverging | CP-11 |
-| `arbOfferCacheAges` | entry ages spanning under-TTL, at-TTL, past-TTL, with and without completed revalidation | CP-12 |
-| `arbEdgeInsertionOrders` | permutations of one edge set's insertion order | CP-15 |
-| `arbArchiveWrites` | repeated writes to identical and distinct keys | CP-16 |
-
-### Run Counts
-
-| Property | numRuns | Why |
-|---|---|---|
-| CP-6 | 600 | hard invariant: over-envelope commits must be 0; concurrency is where it breaks |
-| CP-3 | 500 | hard invariant: partial-commit incidents must be 0 |
-| CP-5 | 400 | the literal L4 claim |
-| CP-13 | 400 | error-condition totality across four distinct rejection causes |
-| CP-1, CP-7, CP-15 | 300 each | precision, conservation, confluence |
-| CP-2, CP-4, CP-9, CP-11, CP-12 | 200 each | |
-| CP-8, CP-10, CP-14, CP-16 | 200 each | |
-
-Shrinking matters most for CP-3, CP-6, and CP-15, where the useful failure report is the minimal interleaving or insertion order that breaks the invariant, not the first random one found.
-
-### Integration And Example Checks
-
-| Criterion | Check | Kind |
-|---|---|---|
-| Req 1.6 — walk under 50 ms for ≤8 legs, in-DO | `check:affected-set` | measurement, recorded |
-| Req 1.9 — one Session_Log entry per Cascade including no-ops | `check:affected-set` | integration |
-| Req 2.7, 2.8 — archive exactly once; commit retained on archive failure | `check:atomic-commit` | integration, fault-injected |
-| Req 3.2 — net amount equals signed sum across the affected set | `check:net-settlement` | example, tabulated |
-| Req 3.6 — affected-set size and settlement-call count both recorded | `check:net-settlement` | integration |
-| Req 3.8 — every payment request carries the Issuance_Service identifier | `check:net-settlement` | static scan + boundary assertion |
-| Req 4.7 — check-and-reserve under 10 ms, no D1 hop | `check:envelope-atomicity` | measurement, recorded |
-| Req 5.3 — no observable staleness window beyond DO write-then-read | `check:hold-lifecycle` | integration |
-| Req 5.7 — cache invalidated before the transition returns | `check:hold-lifecycle` | integration, ordering assertion |
-| Req 6.2 — cascade wall-clock equals slowest leg, not the sum | `check:cascade-bounds` | measurement, recorded |
-| Req 6.7 — re-quote count, reject count, abort reason, elapsed recorded | `check:cascade-bounds` | integration |
-| Req 7.1, 7.2 — zero graph engine reachable; zero graph traversal call | `check:scale-boundary` | static scan |
-| Req 7.8 — declared limits readable as named constants | `check:scale-boundary` | static scan |
-| Req 8.1–8.3 — zero hot-path D1 query; guard rejects with caller named | `check:storage-placement` | static scan + integration |
-| Req 8.5–8.7 — adjacency built once per wake; state survives hibernation; hibernatable WebSockets in use | `check:storage-placement` | integration |
-| Req 8.8 — zero new storage system beyond the declared set | `check:storage-placement` | static scan |
-| Req 9.3, 9.5 — TTL within 30–60 s; full-request keying | `check:edge-cache` | integration |
-| Req 9.6 — dispatch counts with and without cache recorded | `check:edge-cache` | measurement, recorded |
-| Req 9.8 — zero archived-only snapshot retained in DO or D1 | `check:edge-cache` | integration |
-| Req 9.10 — registry lookups invalidated only on (de)registration | `check:edge-cache` | integration |
-| Req 10.6 — no model client reachable from the three new modules | `check:cost-observability` | static scan |
-| Req 11.1, 11.9 — zero Oracle endpoint, credential key name, or SSH config | `check:inference-license` | static scan |
-| Req 11.6 — path, model, license, cost recorded per call | `check:inference-license` | integration |
-| Req 11.8 — neither path recorded as free | `check:inference-license` | integration |
-| Req 12.1–12.4 — reused interface snapshot unchanged | `check:reused-interfaces` | snapshot comparison |
-| Req 12.5, 12.6 — component inventory rungs recorded and inherited, not re-claimed | `check:reused-interfaces` | document assertion |
-| Req 13.1–13.4 — three boundaries `closed`; mirror and route untouched | `check:deploy-boundary` | process assertion |
-| Req 13.7 — zero developer path, credential, or account identifier in source | `check:deploy-boundary` | static scan |
-| Req 14.1–14.3 — 320 px no horizontal scroll; semantic list; 44×44 px targets | `check:replan-surface` | browser assertion |
-| Req 14.5, 14.6 — offline retention with elapsed indicator; convergence on reconnect | `check:replan-surface` | browser assertion |
-| Req 14.7 — rolled-back Cascade never renders as committed | `check:replan-surface` | browser assertion |
-| Req 14.8 — media and icon wrappers keep an accessible name | `check:replan-surface` | accessibility assertion |
-
-### Named Invocable Check Per Requirement
-
-| Requirement | Named check |
-|---|---|
-| 1 — Downstream-Only Affected-Set Precision | `npm run check:affected-set` |
-| 2 — Atomic All-Or-Nothing Commit | `npm run check:atomic-commit` |
-| 3 — One Net Settlement Call Per Cascade | `npm run check:net-settlement` |
-| 4 — Atomic Check-And-Reserve | `npm run check:envelope-atomicity` |
-| 5 — Hold Lifecycle And Release Visibility | `npm run check:hold-lifecycle` |
-| 6 — Bounded Cascade Orchestration | `npm run check:cascade-bounds` |
-| 7 — Flat Adjacency And Scale Boundary | `npm run check:scale-boundary` |
-| 8 — Hot-Path Storage Placement | `npm run check:storage-placement` |
-| 9 — Three-Layer Edge Cache Correctness | `npm run check:edge-cache` |
-| 10 — Model-Free Determinism And Cost | `npm run check:cost-observability` |
-| 11 — Inference Consolidation And License Filter | `npm run check:inference-license` |
-| 12 — Reused-Interface Preservation | `npm run check:reused-interfaces` |
-| 13 — Dev-Only Deploy Boundary | `npm run check:deploy-boundary` |
-| 14 — Mobile-First Local-First Re-Plan Surface | `npm run check:replan-surface` |
-
-## Token Economics And Cost
-
-| Path | Prompt | Completion | Cost per call |
-|---|---|---|---|
-| Affected_Set BFS | 0 | 0 | $0.00 |
-| Atomic commit / rollback | 0 | 0 | $0.00 |
-| Net-amount computation | 0 | 0 | $0.00 |
-| Envelope check-and-reserve | 0 | 0 | $0.00 |
-| Hold lifecycle transitions | 0 | 0 | $0.00 |
-| Topological order maintenance | 0 | 0 | $0.00 |
-| Re_Quote via Discovery Harness | unchanged from travel doc | unchanged | unchanged, and reduced in frequency by Offer_Cache |
-
-Marginal infrastructure: Durable Objects and D1 already provisioned; KV, Cache API, and R2 within free tiers at MVP scale; R2 has no egress fee to Workers. Inference is the one honest non-zero: Workers AI is metered beyond its free neuron allocation and Containers overflow is metered compute (Requirement 11.8). The design records that rather than describing the stack as free.
-
-One-line version: **the cascade itself is arithmetic, so the L4 claim costs storage reads, not tokens.**
-
-## Deploy Boundary
-
-| Boundary | From | To | Evidence Reference | Rollback | State |
-|---|---|---|---|---|---|
-| Bundle commit: affected-set → committed | Authoring | Mirror | none yet — Re-optimization Worker not built | restore the last Committed_Snapshot | `closed` |
-| Envelope mutation: offer → hold | Authoring | Mirror | none yet — Envelope Ledger not built | transition the hold to `released` | `closed` |
-| Prod mirror → Cloudflare delivery | Mirror | Delivery | none — no authorized candidate | not applicable; nothing published | `closed` |
-
-All three read `closed` and are derived from absent Evidence References rather than authored by hand (Requirement 13.2).
-
-## Design Decisions And Rationale
-
-- **Two tables, not a graph engine.** ADR-4, made executable: `check:scale-boundary` statically asserts zero graph engine is reachable. At single-digit-to-20-leg bundles, BFS over an indexed `edges` table is not a compromise — a graph engine would be a second data-access paradigm bought for nothing.
-- **Structure read and authorization read are separate calls.** `affectedSet` answers "what could be affected"; `isPresent` answers "may this leg be dispatched now". Fusing them would let a warm adjacency snapshot authorize a removed leg.
-- **Commit spans the affected set, not the bundle.** Legs outside the Affected_Set are untouched by construction, which is what makes Requirement 1.2's "no unaffected sibling is touched" a property rather than a promise.
-- **Balance_Cache is non-authoritative in its type signature.** `{ value, mustConfirm: true }` makes the confirmation step structural. A comment saying "don't trust this" would be a convention; a required second call is a mechanism.
-- **Integer minor units everywhere.** A ledger whose stated invariant is zero over-envelope commits should not carry float representation error.
-- **Archive failure does not roll back a commit.** Provenance is bookkeeping; the commit is the principal's booking. The asymmetry is deliberate and recorded (Requirement 2.8).
-- **License filtering fails closed.** ADR-3's FOSS-hard-gate flag becomes `model-license-filter.ts`. Unreadable config permits zero model, because a filter that opens under error is decoration.
-- **One pass per event, no recursion.** A Cascade cannot trigger a Cascade. This bounds the whole feature to something testable and keeps a delay storm from becoming an unbounded re-planning loop.
-
-## Open Design Questions
-
-Carried from the PRD, not resolved here. Each is a blocked task in `tasks.md`, not a defaulted value.
-
-1. **Materiality threshold** (Requirement 1.10) — what counts as a change worth triggering a Cascade? Today every Mutation_Event triggers one, and the design records that no threshold is configured. Our reading is that the threshold belongs in the trigger, not in the walk, so adding it later touches `reopt-worker.ts` only. Pending one operator decision.
-2. **Rollback notification path** (Requirement 6.9) — synchronous to the principal, or queued through the reused Notification Dispatcher? The design records the rollback in the Session_Log and emits nothing, so either answer is additive. Pending one operator decision.
-3. **Client-facing `available_balance`** (Requirement 5.10) — transparency for the Shopper Client, or server-side only? The design exposes it server-side only and introduces no client auth scope, so choosing transparency later adds a scope rather than reworking one. Pending one operator decision.
-
-One design question of our own, stated rather than silently answered: the deterministic tie-break for topological order is ascending `legId`. Any total order works; it is stated so that CP-15's "identical to full recompute" is a claim a check can evaluate rather than an aspiration.
+Together these three v1.4.0 files form the complete design baseline. The split changes no requirement, owner, or readiness claim.
